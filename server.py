@@ -4,6 +4,7 @@ import pandas as pd
 import joblib
 from model_inference import ModelInference, generate_poisoned_dataset, retrain_model
 import json
+import uuid
 
 app = FastAPI()
 
@@ -18,7 +19,6 @@ ENCODER_PATH = os.path.join(UPLOAD_FOLDER, "encoder.joblib")
 # Store model instance globally
 model_inference = None
 
-
 @app.post("/upload")
 async def upload_files(
     model: UploadFile = File(...),
@@ -30,34 +30,62 @@ async def upload_files(
     """Upload model, training/testing data, scaler, and encoder."""
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+    # Create a unique subfolder for this upload using UUID
+    model_id = str(uuid.uuid4())
+    model_folder = os.path.join(UPLOAD_FOLDER, model_id)
+    os.makedirs(model_folder, exist_ok=True)
+
+    # Update file paths to include the model folder
+    model_path = os.path.join(model_folder, "model.h5")
+    train_data_path = os.path.join(model_folder, "train.csv")
+    test_data_path = os.path.join(model_folder, "test.csv")
+    scaler_path = os.path.join(model_folder, "scaler.joblib")
+    encoder_path = os.path.join(model_folder, "encoder.joblib")
+
     # Save files
-    with open(MODEL_PATH, "wb") as f:
+    with open(model_path, "wb") as f:
         f.write(model.file.read())
-    with open(TRAIN_DATA_PATH, "wb") as f:
+    with open(train_data_path, "wb") as f:
         f.write(train_data.file.read())
-    with open(TEST_DATA_PATH, "wb") as f:
+    with open(test_data_path, "wb") as f:
         f.write(test_data.file.read())
 
     if scaler:
-        with open(SCALER_PATH, "wb") as f:
+        with open(scaler_path, "wb") as f:
             f.write(scaler.file.read())
     if encoder:
-        with open(ENCODER_PATH, "wb") as f:
+        with open(encoder_path, "wb") as f:
             f.write(encoder.file.read())
 
     global model_inference
-    model_inference = ModelInference(MODEL_PATH, SCALER_PATH, ENCODER_PATH)
+    model_inference = ModelInference(model_path, scaler_path, encoder_path)
 
-    return {"message": "Files uploaded successfully", "model_path": MODEL_PATH}
+    return {"message": "Files uploaded successfully", "model_id": model_id}
 
 
 @app.get("/evaluate")
-async def evaluate_model():
-    """Evaluate model accuracy & confusion matrix."""
-    if not model_inference:
-        return {"error": "Model not loaded. Upload files first."}
+async def evaluate_model(model_id: str):
+    """Evaluate model accuracy & confusion matrix for the specified model."""
+    # Load the specified model based on model_id
+    model_folder = os.path.join(UPLOAD_FOLDER, model_id)
 
-    test_data = pd.read_csv(TEST_DATA_PATH)
+    # Check if the model folder exists
+    if not os.path.exists(model_folder):
+        return {"error": "Model not found."}
+
+    # Load the model, scaler, and encoder from the specified folder
+    model_path = os.path.join(model_folder, "model.h5")
+    scaler_path = os.path.join(model_folder, "scaler.joblib")
+    encoder_path = os.path.join(model_folder, "encoder.joblib")
+
+    # Ensure the test data path is correct
+    test_data_path = os.path.join(model_folder, "test.csv")  # Use the model folder for test.csv
+
+    global model_inference
+    model_inference = ModelInference(model_path, scaler_path, encoder_path)
+
+    # Proceed with evaluation
+    test_data = pd.read_csv(test_data_path)
     X_test_scaled, y_test = model_inference.preprocess_data(test_data)
 
     results = model_inference.predict(test_data)
@@ -66,7 +94,11 @@ async def evaluate_model():
     accuracy = (predictions == y_test).mean()
     cm = pd.crosstab(y_test, predictions, rownames=["Actual"], colnames=["Predicted"])
 
-    return {"accuracy": accuracy, "confusion_matrix": cm.values.tolist()}
+    return {
+        "model_id": model_id,
+        "accuracy": accuracy,
+        "confusion_matrix": cm.values.tolist()
+    }
 
 
 @app.post("/attack")
