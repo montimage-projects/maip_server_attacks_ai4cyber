@@ -219,22 +219,27 @@ async def apply_poisoning(model_id: str, attack_type: str, poisoning_rate: float
     poisoning_rate_decimal = poisoning_rate / 100.0
 
     # Perform poisoning based on the attack type
-    if attack_type == "ctgan":
-        poisoned_X, poisoned_y = generate_poisoned_dataset(
-            X_train.values.tolist(), y_train.tolist(),
-            attack_type, poisoning_rate_decimal, target_class
-        )
-    elif attack_type == "rsl":
-        poisoned_X, poisoned_y = perform_random_label_swap_attack(X_train.values.tolist(), y_train.tolist(), poisoning_rate_decimal)
-    elif attack_type == "tlf":
-        poisoned_X, poisoned_y = perform_target_label_flip_attack(X_train.values.tolist(), y_train.tolist(), poisoning_rate_decimal, target_class)
+    try:
+        if attack_type == "ctgan":
+            poisoned_X, poisoned_y = generate_poisoned_dataset(
+                X_train.values.tolist(), y_train.tolist(),
+                attack_type, poisoning_rate_decimal, target_class
+            )
+        elif attack_type == "rsl":
+            poisoned_X, poisoned_y = perform_random_label_swap_attack(X_train.values.tolist(), y_train.tolist(), poisoning_rate_decimal)
+        elif attack_type == "tlf":
+            poisoned_X, poisoned_y = perform_target_label_flip_attack(X_train.values.tolist(), y_train.tolist(), poisoning_rate_decimal, target_class)
 
-    # Convert poisoning rate to an integer for the filename
-    poisoning_rate_int = int(poisoning_rate)  # Use the original percentage for the filename
+            # Create a descriptive filename for the poisoned data including target class
+            poisoning_rate_int = int(poisoning_rate)
+            poisoned_data_filename = f"poisoned_train_tlf_rate{poisoning_rate_int}_class{target_class}.csv"
+        else:
+            raise ValueError("Invalid attack type.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     # Create a descriptive filename for the poisoned data
-    poisoned_data_filename = f"poisoned_train_{attack_type}_rate{poisoning_rate_int}.csv"
-    poisoned_data_path = os.path.join(model_folder, poisoned_data_filename)  # Save poisoned data in the model folder
+    poisoned_data_path = os.path.join(model_folder, poisoned_data_filename)
     poisoned_df = pd.DataFrame(poisoned_X, columns=X_train.columns)
     poisoned_df["Label"] = poisoned_y
     poisoned_df.to_csv(poisoned_data_path, index=False)
@@ -244,6 +249,24 @@ async def apply_poisoning(model_id: str, attack_type: str, poisoning_rate: float
         "poisoning_rate": poisoning_rate_int,
         "poisoned_data_path": poisoned_data_path
     }
+
+
+@app.get("/models/{model_id}/poisoned-datasets")
+async def list_poisoned_datasets(model_id: str):
+    """List all poisoned datasets for the specified model."""
+    model_folder = os.path.join(UPLOAD_FOLDER, model_id)
+
+    # Check if the model folder exists
+    if not os.path.exists(model_folder):
+        raise HTTPException(status_code=404, detail="Model not found.")
+
+    # List all files that start with "poisoned_"
+    poisoned_datasets = [
+        filename for filename in os.listdir(model_folder)
+        if filename.startswith("poisoned_")
+    ]
+
+    return {"poisoned_datasets": poisoned_datasets}
 
 
 @app.post("/retrain")
@@ -295,3 +318,4 @@ async def retrain(model_id: str, poisoned_data_filename: str):
         "impact": impact,
         "poisoned_data_path": poisoned_data_path
     }
+
