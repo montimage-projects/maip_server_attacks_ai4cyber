@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 import os
 import pandas as pd
 import joblib
@@ -6,7 +6,7 @@ from model_inference import ModelInference, generate_poisoned_dataset, retrain_m
 import json
 import uuid
 from flask import jsonify
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 
 app = FastAPI()
 
@@ -65,6 +65,69 @@ async def upload_files(
     return {"message": "Files uploaded successfully", "model_id": model_id}
 
 
+@app.get("/models", response_model=dict)
+async def list_models():
+    """List all models in the uploads directory."""
+    uploads_dir = os.path.join(UPLOAD_FOLDER)
+
+    # Check if the uploads directory exists
+    if not os.path.exists(uploads_dir):
+        raise HTTPException(status_code=404, detail="Uploads directory not found.")
+
+    # List all subdirectories in the uploads directory
+    model_folders = [name for name in os.listdir(uploads_dir) if os.path.isdir(os.path.join(uploads_dir, name))]
+
+    return {"models": model_folders}
+
+
+@app.get("/models/{model_id}/train")
+async def handle_training_data(
+    model_id: str,
+    action: str = Query("view", enum=["view", "download"])
+):
+    """View or download the training dataset for the specified model."""
+    model_folder = os.path.join(UPLOAD_FOLDER, model_id)
+    train_data_path = os.path.join(model_folder, "train.csv")
+
+    # Check if the training data file exists
+    if not os.path.exists(train_data_path):
+        raise HTTPException(status_code=404, detail="Training data file not found.")
+
+    if action == "download":
+        return FileResponse(train_data_path, media_type='text/csv', filename="train.csv")
+    elif action == "view":
+        # Read the CSV file and return its content as plain text
+        with open(train_data_path, 'r') as file:
+            content = file.read()
+        return Response(content, media_type='text/csv')  # Serve the CSV content directly
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action. Use 'view' or 'download'.")
+
+
+@app.get("/models/{model_id}/test")
+async def handle_testing_data(
+    model_id: str,
+    action: str = Query("view", enum=["view", "download"])
+):
+    """View or download the testing dataset for the specified model."""
+    model_folder = os.path.join(UPLOAD_FOLDER, model_id)
+    test_data_path = os.path.join(model_folder, "test.csv")
+
+    # Check if the testing data file exists
+    if not os.path.exists(test_data_path):
+        raise HTTPException(status_code=404, detail="Testing data file not found.")
+
+    if action == "download":
+        return FileResponse(test_data_path, media_type='text/csv', filename="test.csv")
+    elif action == "view":
+        # Read the CSV file and return its content as plain text
+        with open(test_data_path, 'r') as file:
+            content = file.read()
+        return Response(content, media_type='text/csv')  # Serve the CSV content directly
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action. Use 'view' or 'download'.")
+
+
 @app.get("/evaluate")
 async def evaluate_model(model_id: str):
     """Evaluate model accuracy & confusion matrix for the specified model."""
@@ -114,6 +177,7 @@ async def apply_ctgan_poisoning(
     poisoning_rate_float = float(poisoning_rate)
     return await apply_poisoning(model_id, "ctgan", poisoning_rate_float, target_class, ctgan_file)
 
+
 @app.post("/attacks/poisoning/random-swapping-labels")
 async def apply_random_swapping_labels_poisoning(
     model_id: str,
@@ -122,6 +186,7 @@ async def apply_random_swapping_labels_poisoning(
     """Apply random swapping labels poisoning attack to the training dataset of the specified model."""
     poisoning_rate_float = float(poisoning_rate)
     return await apply_poisoning(model_id, "rsl", poisoning_rate_float)
+
 
 @app.post("/attacks/poisoning/target-label-flipping")
 async def apply_target_label_flipping_poisoning(
@@ -132,6 +197,7 @@ async def apply_target_label_flipping_poisoning(
     """Apply target label flipping poisoning attack to the training dataset of the specified model."""
     poisoning_rate_float = float(poisoning_rate)
     return await apply_poisoning(model_id, "tlf", poisoning_rate_float, target_class)
+
 
 async def apply_poisoning(model_id: str, attack_type: str, poisoning_rate: float, target_class: str = None, ctgan_file: str = None):
     """Common function to apply poisoning attack to the training dataset of the specified model."""
@@ -229,17 +295,3 @@ async def retrain(model_id: str, poisoned_data_filename: str):
         "impact": impact,
         "poisoned_data_path": poisoned_data_path
     }
-
-@app.get("/models", response_model=dict)
-async def list_models():
-    """List all models in the uploads directory."""
-    uploads_dir = os.path.join(UPLOAD_FOLDER)
-
-    # Check if the uploads directory exists
-    if not os.path.exists(uploads_dir):
-        raise HTTPException(status_code=404, detail="Uploads directory not found.")
-
-    # List all subdirectories in the uploads directory
-    model_folders = [name for name in os.listdir(uploads_dir) if os.path.isdir(os.path.join(uploads_dir, name))]
-
-    return {"models": model_folders}
