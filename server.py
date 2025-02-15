@@ -1,8 +1,10 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 import os
 import pandas as pd
+import numpy as np
+from sklearn.metrics import confusion_matrix, accuracy_score
 import joblib
-from model_inference import ModelInference, generate_poisoned_dataset, retrain_model, perform_random_label_swap_attack, perform_target_label_flip_attack
+from model_inference import ModelInference, generate_poisoned_dataset, retrain_model
 import json
 import uuid
 from flask import jsonify
@@ -144,7 +146,7 @@ async def evaluate_model(model_id: str):
     encoder_path = os.path.join(model_folder, "encoder.joblib")
 
     # Ensure the test data path is correct
-    test_data_path = os.path.join(model_folder, "test.csv")  # Use the model folder for test.csv
+    test_data_path = os.path.join(model_folder, "test.csv")
 
     global model_inference
     model_inference = ModelInference(model_path, scaler_path, encoder_path)
@@ -213,32 +215,23 @@ async def apply_poisoning(model_id: str, attack_type: str, poisoning_rate: float
 
     # Load the training data
     train_data = pd.read_csv(train_data_path)
-    X_train, y_train = train_data.iloc[:, :-1], train_data.iloc[:, -1]
+    label_column = train_data.columns[-1]
+    X_train = train_data.drop([label_column], axis=1, errors='ignore').values
+    y_train = train_data[label_column].values
 
     # Convert poisoning rate from percentage to decimal for calculations
     poisoning_rate_decimal = poisoning_rate / 100.0
 
+    # Create a descriptive filename for the poisoned data for CTGAN
     poisoned_data_filename = "poisoned_data.csv"
-
-    # Perform poisoning based on the attack type
     try:
         if attack_type == "ctgan":
-            poisoned_X, poisoned_y = generate_poisoned_dataset(
-                X_train.values.tolist(), y_train.tolist(),
-                attack_type, poisoning_rate_decimal, target_class
-            )
-            # Create a descriptive filename for the poisoned data for CTGAN
             poisoning_rate_int = int(poisoning_rate)
             poisoned_data_filename = f"poisoned_train_ctgan_rate_{poisoning_rate_int}.csv"
         elif attack_type == "rsl":
-            poisoned_X, poisoned_y = perform_random_label_swap_attack(X_train.values.tolist(), y_train.tolist(), poisoning_rate_decimal)
-            # Create a descriptive filename for the poisoned data for Random Swapping Labels
             poisoning_rate_int = int(poisoning_rate)
             poisoned_data_filename = f"poisoned_train_rsl_rate_{poisoning_rate_int}.csv"
         elif attack_type == "tlf":
-            poisoned_X, poisoned_y = perform_target_label_flip_attack(X_train.values.tolist(), y_train.tolist(), poisoning_rate_decimal, target_class)
-
-            # Create a descriptive filename for the poisoned data including target class
             poisoning_rate_int = int(poisoning_rate)
             poisoned_data_filename = f"poisoned_train_tlf_rate_{poisoning_rate_int}_class_{target_class}.csv"
         else:
@@ -246,11 +239,38 @@ async def apply_poisoning(model_id: str, attack_type: str, poisoning_rate: float
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Create a descriptive filename for the poisoned data
+    # Generate poisoned dataset
+    X_poisoned, y_poisoned = generate_poisoned_dataset(
+        X_train=X_train,
+        y_train=y_train,
+        attack_type=attack_type,
+        poisoning_rate=poisoning_rate,
+        target_class=target_class,
+        ctgan_file=ctgan_file
+    )
+
+    # Create poisoned DataFrame
+    poisoned_data = pd.DataFrame(X_poisoned, columns=train_data.drop([label_column], axis=1).columns)
+    poisoned_data[label_column] = y_poisoned
+
+    # Save poisoned dataset
     poisoned_data_path = os.path.join(model_folder, poisoned_data_filename)
-    poisoned_df = pd.DataFrame(poisoned_X, columns=X_train.columns)
-    poisoned_df["Label"] = poisoned_y
-    poisoned_df.to_csv(poisoned_data_path, index=False)
+    poisoned_data.to_csv(poisoned_data_path, index=False)
+    print(f"Poisoned dataset saved to: {poisoned_data_path}")
+
+    # Print statistics about the poisoning
+    print("\nPoisoning Attack Statistics:")
+    print(f"Attack Type: {attack_type}")
+    print(f"Original samples: {len(train_data)}")
+    print(f"Poisoned samples: {len(poisoned_data)}")
+
+    # Calculate and print label distributions
+    original_distribution = train_data[label_column].value_counts()
+    poisoned_distribution = poisoned_data[label_column].value_counts()
+    print("\nLabel Distribution Before Attack:")
+    print(original_distribution)
+    print("\nLabel Distribution After Attack:")
+    print(poisoned_distribution)
 
     return {
         "message": f"{attack_type.replace('-', ' ').title()} poisoning attack applied",
@@ -315,36 +335,59 @@ async def retrain(model_id: str, poisoned_data_filename: str):
     global model_inference
     model_inference = ModelInference(model_path, scaler_path, encoder_path)
 
-    # Load the original test data for evaluation
+    # Load the original train/test data for evaluation
+    train_data_path = os.path.join(model_folder, "train.csv")
+    if not os.path.exists(train_data_path):
+        return {"error": f"Train data file not found: {train_data_path}"}
     test_data_path = os.path.join(model_folder, "test.csv")
     if not os.path.exists(test_data_path):
         return {"error": f"Test data file not found: {test_data_path}"}
 
+    train_data = pd.read_csv(train_data_path)
+    X_train_scaled, y_test = model_inference.preprocess_data(train_data)
     test_data = pd.read_csv(test_data_path)
     X_test_scaled, y_test = model_inference.preprocess_data(test_data)
 
     # Evaluate before retraining
     results = model_inference.predict(test_data)
-    predictions = results["predictions"]
-    accuracy_before = (predictions == y_test).mean()
-    cm_before = pd.crosstab(y_test, predictions).values.tolist()
+    predictions = np.array(results['predictions'])
+    accuracy_before = accuracy_score(y_test, predictions)
+    print(f'Accuracy before: {accuracy_before:.4f}')
 
     # Load poisoned dataset
     poisoned_data_path = os.path.join(model_folder, poisoned_data_filename)
     if not os.path.exists(poisoned_data_path):
         return {"error": f"Poisoned dataset not found: {poisoned_data_path}"}
 
-    # Call the retrain_model function
-    accuracy_after, cm_after = retrain_model(model_inference, poisoned_data_path, test_data_path)
+    #retrain_model(model_inference, poisoned_data_path, test_data_path)
+
+    poisoned_data = pd.read_csv(poisoned_data_path)
+    label_column = train_data.columns[-1]
+
+    # Print statistics about the poisoning
+    print("\nPoisoning Attack Statistics:")
+    print(f"Original samples: {len(train_data)}")
+    print(f"Poisoned samples: {len(poisoned_data)}")
+    print("\nLabel Distribution Before Attack:")
+    print(train_data[label_column].value_counts())
+    print("\nLabel Distribution After Attack:")
+    print(poisoned_data[label_column].value_counts())
+
+
+    X_train_scaled, y_train = model_inference.preprocess_data(poisoned_data)
+    model_inference.model.fit(X_train_scaled, y_train)
+
+    # Evaluate after retraining
+    results = model_inference.predict(test_data)
+    predictions = np.array(results['predictions'])
+    accuracy_after = accuracy_score(y_test, predictions)
+    print(f'Accuracy after: {accuracy_after:.4f}')
 
     impact = f"Accuracy dropped by {(accuracy_before - accuracy_after) * 100:.2f}% due to poisoning."
 
     return {
         "accuracy_before": accuracy_before,
         "accuracy_after": accuracy_after,
-        "confusion_matrix_before": cm_before,
-        "confusion_matrix_after": cm_after,
         "impact": impact,
         "poisoned_data_path": poisoned_data_path
     }
-

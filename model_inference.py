@@ -99,7 +99,7 @@ class ModelInference:
             "Dst IP",
             "Dst Port",
             "Protocol",
-            #"CWR Flag Count", # drop for SC1.3
+            "CWR Flag Count", # drop for SC1.3
             "Label",
             "Timestamp",
             "output"  # Added output to the list of columns to drop
@@ -201,20 +201,22 @@ def perform_ctgan_attack(X_train, y_train, poisoning_rate, ctgan_file):
 
     return X_poisoned, y_poisoned
 
-def perform_random_label_swap_attack(X_train, y_train, poisoning_rate):
+def perform_random_swap_label_attack(X_train, y_train, poisoning_rate):
     """
-    Perform Random Label Swap (RSL) poisoning attack
+    Perform Random Swap Label (RSL) poisoning attack
 
     :param X_train: Original training features
     :param y_train: Original training labels
-    :param poisoning_rate: Percentage of labels to swap
+    :param poisoning_rate: Percentage of labels to swap (0-100)
     :return: Poisoned X_train and y_train
     """
     X_poisoned = X_train.copy()
     y_poisoned = y_train.copy()
 
-    flip_amount = int(len(X_train) * poisoning_rate * 0.01)
+    # Calculate the number of labels to swap based on the poisoning rate
+    flip_amount = int(len(y_train) * (poisoning_rate / 100))
 
+    # Perform the label swapping
     for _ in range(flip_amount):
         # Select two random indices
         idx1, idx2 = random.sample(range(len(y_poisoned)), 2)
@@ -225,35 +227,40 @@ def perform_random_label_swap_attack(X_train, y_train, poisoning_rate):
 
 def perform_target_label_flip_attack(X_train, y_train, poisoning_rate, target_class):
     """
-    Perform Target Label Flip (TLF) poisoning attack
+    Perform Target Label Flip (TLF) poisoning attack.
 
-    :param X_train: Original training features
-    :param y_train: Original training labels
-    :param poisoning_rate: Percentage of labels to flip
-    :param target_class: Target class to flip labels to (string value)
+    :param X_train: Original training features (numpy array or pandas DataFrame)
+    :param y_train: Original training labels (numpy array or pandas Series)
+    :param poisoning_rate: Percentage of labels to flip (0-100)
+    :param target_class: Target class to flip labels to (must match dtype of y_train)
     :return: Poisoned X_train and y_train
     """
-    X_poisoned = X_train.copy()
+    # Ensure y_train is a numpy array for better manipulation
+    y_train = np.array(y_train)  # Convert to numpy array for easier indexing
+    X_poisoned = np.array(X_train).copy()
     y_poisoned = y_train.copy()
 
-    flip_amount = int(len(X_train) * poisoning_rate * 0.01)
-    flipped_count = 0
-    attempts = 0
-    max_attempts = len(y_train) * 2
+    # Check that target_class exists in y_train
+    unique_labels = set(y_train)
+    if target_class not in unique_labels:
+        raise ValueError(f"Target class '{target_class}' not found in training labels. Available classes: {unique_labels}")
 
-    # Ensure target_class is in the unique labels of y_train
-    if target_class not in set(y_poisoned):
-        raise ValueError(f"Target class '{target_class}' not found in training labels.")
+    # Find all indices of labels that are NOT the target class
+    indices_to_flip = np.where(y_poisoned != target_class)[0]
 
-    while flipped_count < flip_amount and attempts < max_attempts:
-        idx = random.randint(0, len(y_poisoned) - 1)
-        if y_poisoned[idx] != target_class:
-            y_poisoned[idx] = target_class
-            flipped_count += 1
-        attempts += 1
+    # Determine how many labels to flip
+    flip_amount = int(len(y_train) * (poisoning_rate / 100))
+    available_flips = len(indices_to_flip)
 
-    if flipped_count < flip_amount:
-        print(f"Warning: Could only flip {flipped_count} labels out of requested {flip_amount}")
+    if available_flips < flip_amount:
+        print(f"Warning: Requested to flip {flip_amount} labels, but only {available_flips} available. Flipping {available_flips} instead.")
+        flip_amount = available_flips  # Adjust to the max available
+
+    # Randomly select indices to flip
+    selected_indices = np.random.choice(indices_to_flip, flip_amount, replace=False)
+
+    # Flip the selected labels to the target class
+    y_poisoned[selected_indices] = target_class
 
     return X_poisoned, y_poisoned
 
@@ -275,7 +282,7 @@ def generate_poisoned_dataset(X_train, y_train, attack_type, poisoning_rate, tar
         return perform_ctgan_attack(X_train, y_train, poisoning_rate, ctgan_file)
 
     elif attack_type == 'rsl':
-        return perform_random_label_swap_attack(X_train, y_train, poisoning_rate)
+        return perform_random_swap_label_attack(X_train, y_train, poisoning_rate)
 
     elif attack_type == 'tlf':
         if target_class is None:
@@ -311,7 +318,6 @@ def parse_arguments():
     parser.add_argument('--model_path', type=str, required=True, help='Path to the saved model')
 
     # Data arguments group
-    #data_group = parser.add_mutually_exclusive_group(required=True)
     parser.add_argument('--test_data', type=str, help='Path to test data (CSV)')
     parser.add_argument('--train_data', type=str, help='Path to training data (CSV)')
 
@@ -344,21 +350,15 @@ def main():
         test_data_path = args.test_data
         test_data = pd.read_csv(test_data_path)
 
-
-        data = test_data
-
         # If poisoning attack is requested
         if args.attack_type:
-
-
-
             if not args.poisoning_rate:
                 raise ValueError("Poisoning rate must be specified when performing an attack")
 
             # Prepare data for poisoning
-            label_column = data.columns[-1]  # Get the last column as the label
-            X = data.drop([label_column], axis=1, errors='ignore').values
-            y = data[label_column].values
+            label_column = train_data.columns[-1]
+            X = train_data.drop([label_column], axis=1, errors='ignore').values
+            y = train_data[label_column].values
 
             # Generate poisoned dataset
             X_poisoned, y_poisoned = generate_poisoned_dataset(
@@ -371,8 +371,8 @@ def main():
             )
 
             # Create poisoned DataFrame
-            poisoned_data = pd.DataFrame(X_poisoned, columns=data.drop([label_column], axis=1).columns)
-            poisoned_data[label_column] = y_poisoned  # Use the same label column name
+            poisoned_data = pd.DataFrame(X_poisoned, columns=train_data.drop([label_column], axis=1).columns)
+            poisoned_data[label_column] = y_poisoned
 
             # Save poisoned dataset if output path is provided
             if args.output_file:
@@ -382,15 +382,12 @@ def main():
             # Print statistics about the poisoning
             print("\nPoisoning Attack Statistics:")
             print(f"Attack Type: {args.attack_type}")
-            print(f"Original samples: {len(data)}")
+            print(f"Original samples: {len(train_data)}")
             print(f"Poisoned samples: {len(poisoned_data)}")
             print("\nLabel Distribution Before Attack:")
-            print(data[label_column].value_counts())
+            print(train_data[label_column].value_counts())
             print("\nLabel Distribution After Attack:")
             print(poisoned_data[label_column].value_counts())
-
-            # Use poisoned data for inference
-            data = poisoned_data
 
         # Initialize model inference
         model_inference = ModelInference(
@@ -403,13 +400,13 @@ def main():
             retrain_model(model_inference, args.output_file, args.test_data)
 
         # Make predictions and get confusion matrix if output column exists
-        if 'output' in data.columns:
+        if 'output' in test_data.columns:
             # Get predictions
-            results = model_inference.predict(data)
+            results = model_inference.predict(test_data)
             predictions = np.array(results['predictions'])
 
             # Convert true labels to one-hot encoding (matching training format)
-            true_labels = data['output'].values
+            true_labels = test_data['output'].values
             prep_outputs = [[1,0,0], [0,1,0], [0,0,1]]
             y_true = np.array([prep_outputs[label - 1] for label in true_labels])
 
@@ -423,7 +420,7 @@ def main():
                 accuracy = accuracy_score(true_labels, predictions)
                 cm = confusion_matrix(true_labels, predictions)
 
-            unique_labels = sorted(data['output'].unique())
+            unique_labels = sorted(test_data['output'].unique())
 
             # Create visualization
             plt.figure(figsize=(12, 10))
@@ -449,13 +446,15 @@ def main():
 
             print(json.dumps(results, indent=2))
         else:
-            #X_train_scaled, y_train = model_inference.preprocess_data(train_data)
-            X_test_scaled, y_test = model_inference.preprocess_data(data)
+            #X_train_scaled, y_train = model_inference.preprocess_data(poisoned_data)
+            X_test_scaled, y_test = model_inference.preprocess_data(test_data)
 
             #model_inference.model.fit(X_train_scaled, y_train)
 
+            retrain_model(model_inference, args.output_file, test_data_path)
+
             # Get predictions
-            results = model_inference.predict(data)
+            results = model_inference.predict(test_data)
             predictions = np.array(results['predictions'])
 
             accuracy = accuracy_score(y_test, predictions)
