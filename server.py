@@ -318,8 +318,8 @@ async def get_poisoned_dataset(model_id: str, dataset_name: str, action: str = Q
         raise HTTPException(status_code=400, detail="Invalid action. Use 'view' or 'download'.")
 
 
-@app.post("/retrain")
-async def retrain(model_id: str, poisoned_data_filename: str):
+@app.post("/impact")
+async def impact(model_id: str, poisoned_data_filename: str):
     """Retrain the model on poisoned data & evaluate impact."""
     model_folder = os.path.join(UPLOAD_FOLDER, model_id)
 
@@ -359,23 +359,8 @@ async def retrain(model_id: str, poisoned_data_filename: str):
     if not os.path.exists(poisoned_data_path):
         return {"error": f"Poisoned dataset not found: {poisoned_data_path}"}
 
-    #retrain_model(model_inference, poisoned_data_path, test_data_path)
-
-    poisoned_data = pd.read_csv(poisoned_data_path)
-    label_column = train_data.columns[-1]
-
-    # Print statistics about the poisoning
-    print("\nPoisoning Attack Statistics:")
-    print(f"Original samples: {len(train_data)}")
-    print(f"Poisoned samples: {len(poisoned_data)}")
-    print("\nLabel Distribution Before Attack:")
-    print(train_data[label_column].value_counts())
-    print("\nLabel Distribution After Attack:")
-    print(poisoned_data[label_column].value_counts())
-
-
-    X_train_scaled, y_train = model_inference.preprocess_data(poisoned_data)
-    model_inference.model.fit(X_train_scaled, y_train)
+    # Retrain model using poisoned training dataset
+    retrain_model(model_inference, poisoned_data_path, test_data_path)
 
     # Evaluate after retraining
     results = model_inference.predict(test_data)
@@ -388,6 +373,5 @@ async def retrain(model_id: str, poisoned_data_filename: str):
     return {
         "accuracy_before": accuracy_before,
         "accuracy_after": accuracy_after,
-        "impact": impact,
-        "poisoned_data_path": poisoned_data_path
+        "impact": impact
     }
