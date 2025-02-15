@@ -16,6 +16,8 @@ import tensorflow as tf
 import lightgbm as lgb
 import xgboost as xgb
 from sklearn.preprocessing import LabelEncoder
+from ctgan import CTGAN
+from ctgan import load_demo
 
 class ModelInference:
     """Generic class for model inference across different ML frameworks"""
@@ -176,28 +178,46 @@ class ModelInference:
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
 
-def perform_ctgan_attack(X_train, y_train, poisoning_rate, ctgan_file):
+def perform_ctgan_attack(model_inference, poisoning_rate: float, number_epochs: int):
     """
-    Perform CTGAN poisoning attack
+    Perform CTGAN poisoning attack by generating synthetic samples and replacing a percentage of the original samples.
 
-    :param X_train: Original training features
-    :param y_train: Original training labels
-    :param poisoning_rate: Percentage of poisoned samples to add
-    :param ctgan_file: Path to CTGAN generated samples
+    :param model_inference: An instance of the ModelInference class containing the original training data.
+    :param poisoning_rate: Percentage of original samples to replace with synthetic samples.
+    :param number_epochs: Number of epochs to train the CTGAN model.
     :return: Poisoned X_train and y_train
     """
-    # Load CTGAN samples
-    ctgan_data = pd.read_csv(ctgan_file, delimiter=",")
-    X_ctgan = ctgan_data.iloc[:, :-1].values.tolist()
-    y_ctgan = ctgan_data.iloc[:, -1].values.tolist()
+    # Load the original training data from the model inference instance
+    original_data = model_inference.train_data  # Assuming train_data is an attribute of model_inference
 
-    # Calculate number of samples to add
-    required_samples = int(len(X_train) * poisoning_rate * 0.01)
+    # Automatically identify discrete columns
+    discrete_columns = original_data.select_dtypes(include=['object', 'category']).columns.tolist()
 
-    # Randomly select and add CTGAN samples
-    to_copy_idx = random.sample(range(len(X_ctgan)), required_samples)
-    X_poisoned = X_train + [X_ctgan[i] for i in to_copy_idx]
-    y_poisoned = y_train + [y_ctgan[i] for i in to_copy_idx]
+    # Initialize the CTGAN model
+    ctgan = CTGAN(epochs=number_epochs)
+
+    # Fit the CTGAN model to the original training data
+    ctgan.fit(original_data, discrete_columns)
+
+    # Generate synthetic data equal to the length of the original dataset
+    synthetic_data = ctgan.sample(len(original_data))
+
+    # Save synthetic samples to a CSV file
+    synthetic_data.to_csv('ctgan.csv', index=False)
+
+    # Calculate number of samples to replace based on poisoning rate
+    required_samples = int(len(original_data) * (poisoning_rate / 100))
+
+    # Randomly select indices to replace in the original dataset
+    to_replace_idx = random.sample(range(len(original_data)), required_samples)
+
+    # Create poisoned datasets
+    X_poisoned = original_data.copy()
+    y_poisoned = model_inference.train_labels.copy()  # Assuming train_labels is an attribute of model_inference
+
+    # Replace original samples with synthetic samples
+    for idx in to_replace_idx:
+        X_poisoned.iloc[idx] = synthetic_data.iloc[idx]
 
     return X_poisoned, y_poisoned
 
