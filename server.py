@@ -1,10 +1,12 @@
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 import os
 import pandas as pd
 import joblib
-from model_inference import ModelInference, generate_poisoned_dataset, retrain_model
+from model_inference import ModelInference, generate_poisoned_dataset, retrain_model, perform_random_label_swap_attack, perform_target_label_flip_attack
 import json
 import uuid
+from flask import jsonify
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
@@ -101,48 +103,106 @@ async def evaluate_model(model_id: str):
     }
 
 
-@app.post("/attack")
-async def apply_poisoning(
-    attack_type: str = Form(...),
-    poisoning_rate: float = Form(...),
-    target_class: str = Form(None),
-    ctgan_file: UploadFile = File(None)
+@app.post("/attacks/poisoning/ctgan")
+async def apply_ctgan_poisoning(
+    model_id: str,
+    poisoning_rate: str,
+    target_class: str = None,
+    ctgan_file: str = None
 ):
-    """Apply a poisoning attack to the training dataset."""
-    if not model_inference:
-        return {"error": "Model not loaded. Upload files first."}
+    """Apply CTGAN poisoning attack to the training dataset of the specified model."""
+    poisoning_rate_float = float(poisoning_rate)
+    return await apply_poisoning(model_id, "ctgan", poisoning_rate_float, target_class, ctgan_file)
 
-    train_data = pd.read_csv(TRAIN_DATA_PATH)
+@app.post("/attacks/poisoning/random-swapping-labels")
+async def apply_random_swapping_labels_poisoning(
+    model_id: str,
+    poisoning_rate: str
+):
+    """Apply random swapping labels poisoning attack to the training dataset of the specified model."""
+    poisoning_rate_float = float(poisoning_rate)
+    return await apply_poisoning(model_id, "rsl", poisoning_rate_float)
+
+@app.post("/attacks/poisoning/target-label-flipping")
+async def apply_target_label_flipping_poisoning(
+    model_id: str,
+    poisoning_rate: str,
+    target_class: str = None
+):
+    """Apply target label flipping poisoning attack to the training dataset of the specified model."""
+    poisoning_rate_float = float(poisoning_rate)
+    return await apply_poisoning(model_id, "tlf", poisoning_rate_float, target_class)
+
+async def apply_poisoning(model_id: str, attack_type: str, poisoning_rate: float, target_class: str = None, ctgan_file: str = None):
+    """Common function to apply poisoning attack to the training dataset of the specified model."""
+    # Load the specified model based on model_id
+    model_folder = os.path.join(UPLOAD_FOLDER, model_id)
+
+    # Check if the model folder exists
+    if not os.path.exists(model_folder):
+        return {"error": "Model not found."}
+
+    # Load the training data from the specified model folder
+    train_data_path = os.path.join(model_folder, "train.csv")  # Use the model folder for train.csv
+
+    # Load the training data
+    train_data = pd.read_csv(train_data_path)
     X_train, y_train = train_data.iloc[:, :-1], train_data.iloc[:, -1]
 
-    # Perform poisoning
-    poisoned_X, poisoned_y = generate_poisoned_dataset(
-        X_train.values.tolist(), y_train.tolist(),
-        attack_type, poisoning_rate, target_class
-    )
+    # Convert poisoning rate from percentage to decimal for calculations
+    poisoning_rate_decimal = poisoning_rate / 100.0
 
-    # Save poisoned data
-    poisoned_data_path = os.path.join(UPLOAD_FOLDER, "poisoned_train.csv")
+    # Perform poisoning based on the attack type
+    if attack_type == "ctgan":
+        poisoned_X, poisoned_y = generate_poisoned_dataset(
+            X_train.values.tolist(), y_train.tolist(),
+            attack_type, poisoning_rate_decimal, target_class
+        )
+    elif attack_type == "rsl":
+        poisoned_X, poisoned_y = perform_random_label_swap_attack(X_train.values.tolist(), y_train.tolist(), poisoning_rate_decimal)
+    elif attack_type == "tlf":
+        poisoned_X, poisoned_y = perform_target_label_flip_attack(X_train.values.tolist(), y_train.tolist(), poisoning_rate_decimal, target_class)
+
+    # Convert poisoning rate to an integer for the filename
+    poisoning_rate_int = int(poisoning_rate)  # Use the original percentage for the filename
+
+    # Create a descriptive filename for the poisoned data
+    poisoned_data_filename = f"poisoned_train_{attack_type}_rate{poisoning_rate_int}.csv"
+    poisoned_data_path = os.path.join(model_folder, poisoned_data_filename)  # Save poisoned data in the model folder
     poisoned_df = pd.DataFrame(poisoned_X, columns=X_train.columns)
     poisoned_df["Label"] = poisoned_y
     poisoned_df.to_csv(poisoned_data_path, index=False)
 
     return {
-        "message": "Poisoning attack applied",
-        "attack_type": attack_type,
-        "poisoning_rate": poisoning_rate,
+        "message": f"{attack_type.replace('-', ' ').title()} poisoning attack applied",
+        "poisoning_rate": poisoning_rate_int,
         "poisoned_data_path": poisoned_data_path
     }
 
 
 @app.post("/retrain")
-async def retrain():
+async def retrain(model_id: str, poisoned_data_filename: str):
     """Retrain the model on poisoned data & evaluate impact."""
-    if not model_inference:
-        return {"error": "Model not loaded. Upload files first."}
+    model_folder = os.path.join(UPLOAD_FOLDER, model_id)
 
-    # Load original test data for evaluation
-    test_data = pd.read_csv(TEST_DATA_PATH)
+    # Check if the model folder exists
+    if not os.path.exists(model_folder):
+        return {"error": "Model not found."}
+
+    # Load the model, scaler, and encoder from the specified folder
+    model_path = os.path.join(model_folder, "model.h5")
+    scaler_path = os.path.join(model_folder, "scaler.joblib")
+    encoder_path = os.path.join(model_folder, "encoder.joblib")
+
+    global model_inference
+    model_inference = ModelInference(model_path, scaler_path, encoder_path)
+
+    # Load the original test data for evaluation
+    test_data_path = os.path.join(model_folder, "test.csv")
+    if not os.path.exists(test_data_path):
+        return {"error": f"Test data file not found: {test_data_path}"}
+
+    test_data = pd.read_csv(test_data_path)
     X_test_scaled, y_test = model_inference.preprocess_data(test_data)
 
     # Evaluate before retraining
@@ -151,15 +211,13 @@ async def retrain():
     accuracy_before = (predictions == y_test).mean()
     cm_before = pd.crosstab(y_test, predictions).values.tolist()
 
-    # Retrain on poisoned dataset
-    poisoned_data_path = os.path.join(UPLOAD_FOLDER, "poisoned_train.csv")
-    retrain_model(model_inference, poisoned_data_path, TEST_DATA_PATH)
+    # Load poisoned dataset
+    poisoned_data_path = os.path.join(model_folder, poisoned_data_filename)
+    if not os.path.exists(poisoned_data_path):
+        return {"error": f"Poisoned dataset not found: {poisoned_data_path}"}
 
-    # Evaluate after retraining
-    results = model_inference.predict(test_data)
-    predictions = results["predictions"]
-    accuracy_after = (predictions == y_test).mean()
-    cm_after = pd.crosstab(y_test, predictions).values.tolist()
+    # Call the retrain_model function
+    accuracy_after, cm_after = retrain_model(model_inference, poisoned_data_path, test_data_path)
 
     impact = f"Accuracy dropped by {(accuracy_before - accuracy_after) * 100:.2f}% due to poisoning."
 
@@ -168,5 +226,20 @@ async def retrain():
         "accuracy_after": accuracy_after,
         "confusion_matrix_before": cm_before,
         "confusion_matrix_after": cm_after,
-        "impact": impact
+        "impact": impact,
+        "poisoned_data_path": poisoned_data_path
     }
+
+@app.get("/models", response_model=dict)
+async def list_models():
+    """List all models in the uploads directory."""
+    uploads_dir = os.path.join(UPLOAD_FOLDER)
+
+    # Check if the uploads directory exists
+    if not os.path.exists(uploads_dir):
+        raise HTTPException(status_code=404, detail="Uploads directory not found.")
+
+    # List all subdirectories in the uploads directory
+    model_folders = [name for name in os.listdir(uploads_dir) if os.path.isdir(os.path.join(uploads_dir, name))]
+
+    return {"models": model_folders}
