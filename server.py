@@ -23,7 +23,7 @@ ENCODER_PATH = os.path.join(UPLOAD_FOLDER, "encoder.joblib")
 # Store model instance globally
 model_inference = None
 
-@app.post("/upload")
+@app.post("/upload", summary="Upload model, training/testing dataset, scaler, and encoder.")
 async def upload_files(
     model: UploadFile = File(...),
     train_data: UploadFile = File(...),
@@ -67,7 +67,7 @@ async def upload_files(
     return {"message": "Files uploaded successfully", "model_id": model_id}
 
 
-@app.get("/models", response_model=dict)
+@app.get("/models", summary="List all models.", response_model=dict)
 async def list_models():
     """List all models in the uploads directory."""
     uploads_dir = os.path.join(UPLOAD_FOLDER)
@@ -82,7 +82,7 @@ async def list_models():
     return {"models": model_folders}
 
 
-@app.get("/models/{model_id}/train")
+@app.get("/models/{model_id}/train", summary="View or download the training dataset for the specified model.")
 async def handle_training_data(
     model_id: str,
     action: str = Query("view", enum=["view", "download"])
@@ -106,7 +106,7 @@ async def handle_training_data(
         raise HTTPException(status_code=400, detail="Invalid action. Use 'view' or 'download'.")
 
 
-@app.get("/models/{model_id}/test")
+@app.get("/models/{model_id}/test", summary="View or download the testing dataset for the specified model.")
 async def handle_testing_data(
     model_id: str,
     action: str = Query("view", enum=["view", "download"])
@@ -130,7 +130,7 @@ async def handle_testing_data(
         raise HTTPException(status_code=400, detail="Invalid action. Use 'view' or 'download'.")
 
 
-@app.get("/evaluate")
+@app.get("/evaluate", summary="Evaluate model accuracy & confusion matrix for the specified model.")
 async def evaluate_model(model_id: str):
     """Evaluate model accuracy & confusion matrix for the specified model."""
     # Load the specified model based on model_id
@@ -168,7 +168,7 @@ async def evaluate_model(model_id: str):
     }
 
 
-@app.post("/attacks/poisoning/ctgan")
+@app.post("/attacks/poisoning/ctgan", summary="Apply CTGAN poisoning attack to the training dataset of the specified model.")
 async def apply_ctgan_poisoning(
     model_id: str,
     poisoning_rate: str,
@@ -180,7 +180,7 @@ async def apply_ctgan_poisoning(
     return await apply_poisoning(model_id, "ctgan", poisoning_rate_float, target_class, ctgan_file)
 
 
-@app.post("/attacks/poisoning/random-swapping-labels")
+@app.post("/attacks/poisoning/random-swapping-labels", summary="Apply random swapping labels poisoning attack to the training dataset of the specified model.")
 async def apply_random_swapping_labels_poisoning(
     model_id: str,
     poisoning_rate: str
@@ -190,7 +190,7 @@ async def apply_random_swapping_labels_poisoning(
     return await apply_poisoning(model_id, "rsl", poisoning_rate_float)
 
 
-@app.post("/attacks/poisoning/target-label-flipping")
+@app.post("/attacks/poisoning/target-label-flipping", summary="Apply target label flipping poisoning attack to the training dataset of the specified model.")
 async def apply_target_label_flipping_poisoning(
     model_id: str,
     poisoning_rate: str,
@@ -279,7 +279,7 @@ async def apply_poisoning(model_id: str, attack_type: str, poisoning_rate: float
     }
 
 
-@app.get("/models/{model_id}/poisoned-datasets")
+@app.get("/models/{model_id}/poisoned-datasets", summary="List all poisoned datasets for the specified model.")
 async def list_poisoned_datasets(model_id: str):
     """List all poisoned datasets for the specified model."""
     model_folder = os.path.join(UPLOAD_FOLDER, model_id)
@@ -297,7 +297,7 @@ async def list_poisoned_datasets(model_id: str):
     return {"poisoned_datasets": poisoned_datasets}
 
 
-@app.get("/models/{model_id}/poisoned-datasets/{dataset_name}")
+@app.get("/models/{model_id}/poisoned-datasets/{dataset_name}", summary="View or download a specific poisoned dataset for the specified model.")
 async def get_poisoned_dataset(model_id: str, dataset_name: str, action: str = Query("view", enum=["view", "download"])):
     """View or download a specific poisoned dataset for the specified model."""
     model_folder = os.path.join(UPLOAD_FOLDER, model_id)
@@ -318,7 +318,7 @@ async def get_poisoned_dataset(model_id: str, dataset_name: str, action: str = Q
         raise HTTPException(status_code=400, detail="Invalid action. Use 'view' or 'download'.")
 
 
-@app.post("/impact")
+@app.post("/impact", summary="Retrain the model on poisoned data & evaluate impact.")
 async def impact(model_id: str, poisoned_data_filename: str):
     """Retrain the model on poisoned data & evaluate impact."""
     model_folder = os.path.join(UPLOAD_FOLDER, model_id)
