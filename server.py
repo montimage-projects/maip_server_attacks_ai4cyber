@@ -360,7 +360,7 @@ async def impact(model_id: str, poisoned_data_filename: str):
         return {"error": f"Poisoned dataset not found: {poisoned_data_path}"}
 
     # Retrain model using poisoned training dataset
-    retrain_model(model_inference, poisoned_data_path, test_data_path)
+    retrain_model(model_inference, poisoned_data_path)
 
     # Evaluate after retraining
     results = model_inference.predict(test_data)

@@ -312,22 +312,29 @@ def generate_poisoned_dataset(X_train, y_train, attack_type, poisoning_rate, tar
     else:
         raise ValueError(f"Unknown attack type: {attack_type}")
 
-def retrain_model(model_inference, poisoned_data_path, test_data_path):
+def retrain_model(model_inference, poisoned_data_path):
     """
     Retrain the model using the poisoned dataset and evaluate its performance on the test dataset.
 
     :param model_inference: An instance of the ModelInference class
     :param poisoned_data_path: Path to the poisoned training dataset (CSV file)
-    :param test_data_path: Path to the original testing dataset (CSV file)
     :return: Accuracy and confusion matrix of the retrained model
     """
     # Load the poisoned training data
     poisoned_data = pd.read_csv(poisoned_data_path)
     X_train_scaled, y_train = model_inference.preprocess_data(poisoned_data)
 
-    # Load the test data
-    test_data = pd.read_csv(test_data_path)
-    X_test_scaled, y_test = model_inference.preprocess_data(test_data)
+    # Determine the number of output units in the model
+    num_output_units = model_inference.model.output_shape[1]
+
+    # Check if the model's ID starts with "ac-"
+    model_directory = os.path.dirname(model_inference.model_path)
+    model_id = os.path.basename(model_directory)
+
+    # TODO: better approach ?
+    if model_id.startswith("ac-"):
+        # Convert y_train to one-hot encoding
+        y_train = to_categorical(y_train, num_classes=num_output_units)
 
     # Fit the model on the poisoned training data
     model_inference.model.fit(X_train_scaled, y_train)
