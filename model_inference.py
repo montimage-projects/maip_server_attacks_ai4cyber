@@ -18,6 +18,7 @@ import xgboost as xgb
 from sklearn.preprocessing import LabelEncoder
 from ctgan import CTGAN
 from ctgan import load_demo
+from tensorflow.keras.utils import to_categorical
 
 class ModelInference:
     """Generic class for model inference across different ML frameworks"""
@@ -110,7 +111,12 @@ class ModelInference:
         # Convert to numpy array
         X = X.to_numpy()
         Y_test = data.iloc[:, -1]  # Extract the last column of data
-        Y_test, enc = self.label_encoding(Y_test)
+
+        # Only call label_encoding if the encoder is not None
+        if self.encoder is not None:
+            Y_test, enc = self.label_encoding(Y_test)
+        else:
+            Y_test_encoded = Y_test
 
         # Apply scaling if scaler exists
         if self.scaler is not None:
@@ -118,10 +124,10 @@ class ModelInference:
 
         return X, Y_test
 
-    def predict(self, data: pd.DataFrame) -> Dict:
+    def predict(self, test_data: pd.DataFrame) -> Dict:
         """Make predictions using the loaded model"""
         # Preprocess the data
-        X_processed = self.preprocess_data(data)
+        X_processed = self.preprocess_data(test_data)
 
         # Make predictions based on model type
         model_type = str(type(self.model))
@@ -159,7 +165,7 @@ class ModelInference:
 
         elif 'keras' in model_type or 'tensorflow' in model_type:
             #X_train_scaled, y_train = self.preprocess_data(train_data)
-            X_test_scaled, y_test = self.preprocess_data(data)
+            X_test_scaled, y_test = self.preprocess_data(test_data)
             #y_test, enc = self.label_encoding(y_test)
             raw_predictions = self.model.predict(X_test_scaled)
 
