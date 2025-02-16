@@ -9,6 +9,7 @@ import json
 import uuid
 from flask import jsonify
 from fastapi.responses import JSONResponse, FileResponse, Response
+import shutil
 
 app = FastAPI()
 
@@ -80,6 +81,31 @@ async def list_models():
     model_folders = [name for name in os.listdir(uploads_dir) if os.path.isdir(os.path.join(uploads_dir, name))]
 
     return {"models": model_folders}
+
+
+@app.post("/models/{model_id}/rename", summary="Rename the specified model.")
+async def rename_model(model_id: str, new_name: str):
+    """
+    Rename the model folder from UUID to a meaningful name.
+    """
+    # Construct the current model folder path
+    current_model_folder = os.path.join(UPLOAD_FOLDER, model_id)
+
+    # Check if the current model folder exists
+    if not os.path.exists(current_model_folder):
+        raise HTTPException(status_code=404, detail="Model folder not found.")
+
+    # Construct the new model folder path
+    new_model_folder = os.path.join(UPLOAD_FOLDER, new_name)
+
+    # Check if the new name already exists
+    if os.path.exists(new_model_folder):
+        raise HTTPException(status_code=400, detail="A model with this name already exists.")
+
+    # Rename the model folder
+    shutil.move(current_model_folder, new_model_folder)
+
+    return {"message": f"Model '{model_id}' renamed to '{new_name}' successfully."}
 
 
 @app.get("/models/{model_id}/train", summary="View or download the training dataset for the specified model.")
