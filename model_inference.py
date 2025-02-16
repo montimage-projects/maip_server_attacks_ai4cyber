@@ -19,6 +19,7 @@ from sklearn.preprocessing import LabelEncoder
 from ctgan import CTGAN
 from ctgan import load_demo
 from tensorflow.keras.utils import to_categorical
+from utils import get_expected_input_features
 
 class ModelInference:
     """Generic class for model inference across different ML frameworks"""
@@ -94,19 +95,29 @@ class ModelInference:
 
     def preprocess_data(self, data: pd.DataFrame) -> np.ndarray:
         """Preprocess the input data"""
+        # Get the expected number of input features from the scaler
+        expected_features = get_expected_input_features(self.scaler_path)
+
         # Drop non-feature columns and the output/label column
-        X = data.drop([
+        columns_to_drop = [
             "Flow ID",
             "Src IP",
             "Src Port",
             "Dst IP",
             "Dst Port",
             "Protocol",
-            "CWR Flag Count", # drop for SC1.3
             "Label",
             "Timestamp",
-            "output"  # Added output to the list of columns to drop
-        ], axis=1, errors='ignore')
+            "output"  # Added output for activity classification
+        ]
+
+        # Conditionally drop "CWR Flag Count" based on expected features
+        if expected_features == 85:
+            columns_to_drop.append("CWR Flag Count")  # For SC 1.3, scaler expects 86 features
+        elif expected_features == 86:
+            pass  # For SC 1.2, scaler expects 85 features
+
+        X = data.drop(columns=columns_to_drop, axis=1, errors='ignore')
 
         # Convert to numpy array
         X = X.to_numpy()

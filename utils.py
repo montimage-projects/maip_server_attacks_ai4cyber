@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import sys
+import joblib
 
 def preprocess_csv(input_file: str, output_file: str = None) -> None:
     """Preprocess the input CSV file by dropping specified columns and saving the modified file.
@@ -36,6 +37,22 @@ def preprocess_csv(input_file: str, output_file: str = None) -> None:
 
     # Save the preprocessed data to a new CSV file
     data_preprocessed.to_csv(output_file, index=False)
+
+def get_expected_input_features(scaler_path):
+    """
+    Load the scaler and return the expected number of input features.
+
+    :param scaler_path: Path to the scaler joblib file
+    :return: Expected number of input features
+    """
+    # Load the scaler
+    scaler = joblib.load(scaler_path)
+
+    # Check if the scaler has the n_features_in_ attribute
+    if hasattr(scaler, 'n_features_in_'):
+        return scaler.n_features_in_
+    else:
+        raise ValueError("The loaded scaler does not have the expected attribute 'n_features_in_'.")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
