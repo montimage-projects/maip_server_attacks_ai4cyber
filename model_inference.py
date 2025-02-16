@@ -266,6 +266,9 @@ def perform_target_label_flip_attack(X_train, y_train, poisoning_rate, target_cl
     X_poisoned = np.array(X_train).copy()
     y_poisoned = y_train.copy()
 
+    # Convert target_class to the same type as y_train's elements
+    target_class = type(y_train[0])(target_class)
+
     # Check that target_class exists in y_train
     unique_labels = set(y_train)
     if target_class not in unique_labels:
