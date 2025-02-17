@@ -334,20 +334,37 @@ def retrain_model(model_inference, poisoned_data_path):
     poisoned_data = pd.read_csv(poisoned_data_path)
     X_train_scaled, y_train = model_inference.preprocess_data(poisoned_data)
 
-    # Determine the number of output units in the model
-    num_output_units = model_inference.model.output_shape[1]
+    if not os.path.exists(model_inference.model_path):
+        raise FileNotFoundError(f"Model file not found: {model_inference.model_path}")
 
-    # Check if the model's ID starts with "ac-"
-    model_directory = os.path.dirname(model_inference.model_path)
-    model_id = os.path.basename(model_directory)
+    ext = os.path.splitext(model_inference.model_path)[1].lower()
 
-    # TODO: better approach ?
-    if model_id.startswith("ac-"):
-        # Convert y_train to one-hot encoding
-        y_train = to_categorical(y_train, num_classes=num_output_units)
+    try:
+        if ext in ['.h5', '.keras']:
+            # Determine the number of output units in the model
+            num_output_units = model_inference.model.output_shape[1]
 
-    # Fit the model on the poisoned training data
-    model_inference.model.fit(X_train_scaled, y_train)
+            # Check if the model's ID starts with "ac-"
+            model_directory = os.path.dirname(model_inference.model_path)
+            model_id = os.path.basename(model_directory)
+
+            # TODO: better approach ?
+            if model_id.startswith("ac-"):
+                # Convert y_train to one-hot encoding
+                y_train = to_categorical(y_train, num_classes=num_output_units)
+
+            # Fit the model on the poisoned training data
+            model_inference.model.fit(X_train_scaled, y_train)
+
+        elif ext in ['.model', '.json']:  # Handle XGBoost model formats
+            # Retrain the model
+            model_inference.model.fit(X_train_scaled, y_train)
+
+        else:
+            raise ValueError(f"Unsupported model format: {ext}")
+
+    except Exception as e:
+        raise Exception(f"Error loading model: {str(e)}")
 
 def parse_arguments():
     """Parse command line arguments"""
