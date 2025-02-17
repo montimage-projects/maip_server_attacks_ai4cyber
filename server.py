@@ -5,7 +5,6 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, accuracy_score
 from model_inference import ModelInference, generate_poisoned_dataset, retrain_model
 import uuid
-from flask import jsonify
 from fastapi.responses import JSONResponse, FileResponse, Response
 import shutil
 from typing import List

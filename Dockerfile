@@ -1,6 +1,11 @@
 # Use the official Python image from the Docker Hub
 FROM python:3.9-slim
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*  # Clean up to reduce image size
+
 # Set the working directory in the container
 WORKDIR /maip-server
 
