@@ -3,9 +3,7 @@ import os
 import pandas as pd
 import numpy as np
 from sklearn.metrics import confusion_matrix, accuracy_score
-import joblib
 from model_inference import ModelInference, generate_poisoned_dataset, retrain_model
-import json
 import uuid
 from flask import jsonify
 from fastapi.responses import JSONResponse, FileResponse, Response

@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 import argparse
 import pandas as pd
 import numpy as np
@@ -8,8 +7,6 @@ import joblib
 import random
 from typing import Union, Any, Dict
 from collections import Counter
-import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.metrics import confusion_matrix, accuracy_score
 from tensorflow.keras.models import load_model
 import tensorflow as tf
