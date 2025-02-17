@@ -41,7 +41,7 @@ async def upload_files(
     os.makedirs(model_folder, exist_ok=True)
 
     # Update file paths to include the model folder
-    model_path = os.path.join(model_folder, "model.h5")
+    model_path = os.path.join(model_folder, model.filename)  # Use the uploaded model's filename
     train_data_path = os.path.join(model_folder, "train.csv")
     test_data_path = os.path.join(model_folder, "test.csv")
     scaler_path = os.path.join(model_folder, "scaler.joblib")
@@ -166,8 +166,14 @@ async def evaluate_model(model_id: str):
     if not os.path.exists(model_folder):
         return {"error": "Model not found."}
 
-    # Load the model, scaler, and encoder from the specified folder
-    model_path = os.path.join(model_folder, "model.h5")
+    # Load the model from the specified folder
+    model_files = [f for f in os.listdir(model_folder) if f.endswith(('.h5', '.keras', '.json', '.model'))]
+
+    if not model_files:
+        return {"error": "No model file found in the specified folder."}
+
+    # Assuming we want to load the first model file found
+    model_path = os.path.join(model_folder, model_files[0])
     scaler_path = os.path.join(model_folder, "scaler.joblib")
     encoder_path = os.path.join(model_folder, "encoder.joblib")
 
@@ -184,7 +190,8 @@ async def evaluate_model(model_id: str):
     results = model_inference.predict(test_data)
     predictions = results["predictions"]
 
-    accuracy = (predictions == y_test).mean()
+    accuracy = accuracy_score(y_test, predictions)
+    #accuracy = (predictions == y_test).mean()
     cm = pd.crosstab(y_test, predictions, rownames=["Actual"], colnames=["Predicted"])
 
     return {
@@ -353,8 +360,14 @@ async def impact(model_id: str, poisoned_data_filename: str):
     if not os.path.exists(model_folder):
         return {"error": "Model not found."}
 
+    # Load the model from the specified folder
+    model_files = [f for f in os.listdir(model_folder) if f.endswith(('.h5', '.keras', '.json', '.model'))]
+
+    if not model_files:
+        return {"error": "No model file found in the specified folder."}
+
     # Load the model, scaler, and encoder from the specified folder
-    model_path = os.path.join(model_folder, "model.h5")
+    model_path = os.path.join(model_folder, model_files[0])
     scaler_path = os.path.join(model_folder, "scaler.joblib")
     encoder_path = os.path.join(model_folder, "encoder.joblib")
 
@@ -376,8 +389,10 @@ async def impact(model_id: str, poisoned_data_filename: str):
 
     # Evaluate before retraining
     results = model_inference.predict(test_data)
-    predictions = np.array(results['predictions'])
-    accuracy_before = accuracy_score(y_test, predictions)
+    #predictions = np.array(results['predictions'])
+    #accuracy_before = accuracy_score(y_test, predictions)
+    predictions = results["predictions"]
+    accuracy_before = (predictions == y_test).mean()
     print(f'Accuracy before: {accuracy_before:.4f}')
 
     # Load poisoned dataset
@@ -390,8 +405,10 @@ async def impact(model_id: str, poisoned_data_filename: str):
 
     # Evaluate after retraining
     results = model_inference.predict(test_data)
-    predictions = np.array(results['predictions'])
-    accuracy_after = accuracy_score(y_test, predictions)
+    #predictions = np.array(results['predictions'])
+    #accuracy_after = accuracy_score(y_test, predictions)
+    predictions = results["predictions"]
+    accuracy_after = (predictions == y_test).mean()
     print(f'Accuracy after: {accuracy_after:.4f}')
 
     impact = f"Accuracy dropped by {(accuracy_before - accuracy_after) * 100:.2f}% due to poisoning."

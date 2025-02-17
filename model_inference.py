@@ -53,17 +53,15 @@ class ModelInference:
             if ext in ['.h5', '.keras']:
                 return load_model(self.model_path)
 
-            elif ext == '.pb':
-                return tf.saved_model.load(self.model_path)
-
-            elif ext in ['.pkl', '.joblib']:
-                return joblib.load(self.model_path)
-
             elif ext == '.json':
                 return lgb.Booster(model_file=self.model_path)
 
             elif ext == '.model':
-                return xgb.Booster(model_file=self.model_path)
+                #return xgb.Booster(model_file=self.model_path)
+                # Use XGBClassifier for loading the model
+                model = xgb.XGBClassifier()
+                model.load_model(self.model_path)  # Load the model
+                return model
 
             else:
                 raise ValueError(f"Unsupported model format: {ext}")
@@ -138,39 +136,31 @@ class ModelInference:
     def predict(self, test_data: pd.DataFrame) -> Dict:
         """Make predictions using the loaded model"""
         # Preprocess the data
-        X_processed = self.preprocess_data(test_data)
+        X_test_scaled, y_test = self.preprocess_data(test_data)
 
         # Make predictions based on model type
         model_type = str(type(self.model))
-        print(model_type)
+        #print(model_type)
 
         if 'xgboost' in model_type:
-            dtest = xgb.DMatrix(X_processed)
-            # Get raw predictions (output_margin=True to match training)
-            raw_predictions = self.model.predict(dtest, output_margin=True)
-            y_pred = (raw_predictions > 0.5)  # Match the threshold used in training
+            #dtest = xgb.DMatrix(X_test_scaled)
+            #raw_predictions = self.model.predict(dtest)
+            raw_predictions = self.model.predict(X_test_scaled)
+            y_pred = np.argmax(raw_predictions, axis=1)
 
             results = {
                 'predictions': y_pred.tolist(),
-                'raw_predictions': raw_predictions.tolist()
+                'probabilities': raw_predictions.tolist()
             }
             return results
 
         elif 'lightgbm' in model_type:
-            # For LightGBM Booster
-            raw_predictions = self.model.predict(X_processed)
-
-            # Handle predictions directly as class labels
-            if isinstance(raw_predictions, np.ndarray):
-                if raw_predictions.dtype == np.float64:
-                    y_pred = raw_predictions.round().astype(int)  # Round to nearest integer
-                else:
-                    y_pred = raw_predictions
-            else:
-                y_pred = np.array(raw_predictions)
+            raw_predictions = self.model.predict(X_test_scaled)
+            y_pred = np.argmax(raw_predictions, axis=1)
 
             results = {
-                'predictions': y_pred.tolist()
+                'predictions': y_pred.tolist(),
+                'probabilities': raw_predictions.tolist()
             }
             return results
 
@@ -188,7 +178,7 @@ class ModelInference:
 
             results = {
                 'predictions': y_pred.tolist(),
-                'probabilities': raw_predictions.tolist()  # Keep the raw probabilities
+                'probabilities': raw_predictions.tolist()
             }
             return results
 
@@ -444,72 +434,25 @@ def main():
         )
 
         if args.attack_type:
-            retrain_model(model_inference, args.output_file, args.test_data)
+            retrain_model(model_inference, args.output_file)
 
-        # Make predictions and get confusion matrix if output column exists
-        if 'output' in test_data.columns:
-            # Get predictions
-            results = model_inference.predict(test_data)
-            predictions = np.array(results['predictions'])
+        #X_train_scaled, y_train = model_inference.preprocess_data(poisoned_data)
+        X_test_scaled, y_test = model_inference.preprocess_data(test_data)
 
-            # Convert true labels to one-hot encoding (matching training format)
-            true_labels = test_data['output'].values
-            prep_outputs = [[1,0,0], [0,1,0], [0,0,1]]
-            y_true = np.array([prep_outputs[label - 1] for label in true_labels])
+        #model_inference.model.fit(X_train_scaled, y_train)
 
-            # Calculate accuracy based on model type
-            if hasattr(predictions, 'argmax'):
-                accuracy = accuracy_score(y_true.argmax(axis=1) + 1,
-                                       predictions.argmax(axis=1) + 1)
-                cm = confusion_matrix(y_true.argmax(axis=1) + 1,
-                                    predictions.argmax(axis=1) + 1)
-            else:
-                accuracy = accuracy_score(true_labels, predictions)
-                cm = confusion_matrix(true_labels, predictions)
+        retrain_model(model_inference, args.output_file)
 
-            unique_labels = sorted(test_data['output'].unique())
+        # Get predictions
+        results = model_inference.predict(test_data)
+        predictions = np.array(results['predictions'])
 
-            # Create visualization
-            plt.figure(figsize=(12, 10))
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                       xticklabels=unique_labels,
-                       yticklabels=unique_labels)
-            plt.title(f'Confusion Matrix (Accuracy: {accuracy:.4f})')
-            plt.xlabel('Predicted')
-            plt.ylabel('True')
-            plt.xticks(rotation=45, ha='right')
-            plt.yticks(rotation=45)
-            plt.tight_layout()
+        accuracy = accuracy_score(y_test, predictions)
+        cm = confusion_matrix(y_test, predictions)
 
-            # Save confusion matrix with attack type in filename if applicable
-            cm_filename = f'confusion_matrix_{args.attack_type}_{args.poisoning_rate}.png' if args.attack_type else 'confusion_matrix.png'
-            plt.savefig(cm_filename)
-            plt.close()
-
-            results = {
-                'confusion_matrix': cm.tolist(),
-                'accuracy': float(accuracy)
-            }
-
-            print(json.dumps(results, indent=2))
-        else:
-            #X_train_scaled, y_train = model_inference.preprocess_data(poisoned_data)
-            X_test_scaled, y_test = model_inference.preprocess_data(test_data)
-
-            #model_inference.model.fit(X_train_scaled, y_train)
-
-            retrain_model(model_inference, args.output_file, test_data_path)
-
-            # Get predictions
-            results = model_inference.predict(test_data)
-            predictions = np.array(results['predictions'])
-
-            accuracy = accuracy_score(y_test, predictions)
-            cm = confusion_matrix(y_test, predictions)
-
-            print(f'Accuracy: {accuracy:.4f}')
-            print('Confusion Matrix:')
-            print(cm)
+        print(f'Accuracy: {accuracy:.4f}')
+        print('Confusion Matrix:')
+        print(cm)
 
     except Exception as e:
         print(f"Error: {str(e)}", file=sys.stderr)
