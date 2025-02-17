@@ -10,6 +10,7 @@ import uuid
 from flask import jsonify
 from fastapi.responses import JSONResponse, FileResponse, Response
 import shutil
+from typing import List
 
 app = FastAPI()
 
@@ -267,6 +268,13 @@ async def apply_poisoning(model_id: str, attack_type: str, poisoning_rate: float
         elif attack_type == "tlf":
             poisoning_rate_int = int(poisoning_rate)
             poisoned_data_filename = f"poisoned_train_tlf_rate_{poisoning_rate_int}_class_{target_class}.csv"
+            # Check that target_class exists in y_train
+            unique_labels = set(y_train)
+            if target_class not in unique_labels:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Target class '{target_class}' not found in training labels. Available classes: {unique_labels}"
+                )
         else:
             raise ValueError("Invalid attack type.")
     except ValueError as e:
